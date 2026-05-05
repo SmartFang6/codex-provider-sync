@@ -113,6 +113,89 @@ codex-provider restore C:\Users\you\.codex\backups_state\provider-sync\<timestam
 codex-provider prune-backups --keep 5
 ```
 
+## 会话云同步 v1
+
+这个功能用于个人设备之间手动同步 Codex 聊天会话：本地选择部分或全量会话上传到自己的服务器，再从服务器拉取到另一台设备的本地 Codex。
+
+同步范围：
+
+- `sessions` 和 `archived_sessions` 下的 rollout JSONL
+- `state_5.sqlite` 里的 `threads`
+- 如果存在，也同步 `thread_spawn_edges`
+
+不会同步：
+
+- `auth.json`
+- `config.toml`
+- provider 配置
+- 缓存、临时文件或整个 `.codex`
+
+### 服务器部署
+
+推荐在 VPS 上使用 Docker，并让容器只监听本机端口，再通过 1Panel / OpenResty / Nginx 做 HTTPS 反代。
+
+```bash
+git clone https://github.com/Dailin521/codex-provider-sync.git /opt/codex-session-sync
+cd /opt/codex-session-sync
+cp docker-compose.yml docker-compose.local.yml
+```
+
+编辑 `docker-compose.local.yml`，把 `CODEX_SYNC_ADMIN_PASSWORD` 改成自己的强密码，然后启动：
+
+```bash
+docker compose -f docker-compose.local.yml up -d --build
+```
+
+容器默认绑定：
+
+```text
+127.0.0.1:8787 -> 8787
+```
+
+1Panel / OpenResty 反代建议：
+
+```nginx
+location ^~ / {
+    proxy_pass http://127.0.0.1:8787;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_http_version 1.1;
+}
+```
+
+如果使用你的服务器规划，可以把新子域名（例如 `codex.bifang.us.ci`）解析到 `64.83.43.32`，再在 1Panel 里新增网站并反代到 `127.0.0.1:8787`。
+
+### 本地使用
+
+先打开本地网页：
+
+```bash
+codex-provider gui --codex-home ~/.codex
+```
+
+在“云同步”区域填写服务器地址、账号和密码登录，然后加载本地会话、选择并上传；另一台设备登录同一服务器后加载服务器会话并拉取。
+
+也可以使用 CLI：
+
+```bash
+codex-provider cloud-login --server https://codex.bifang.us.ci --user admin --password <password>
+codex-provider cloud-push --all
+codex-provider cloud-push --ids <id1,id2>
+codex-provider cloud-pull --all
+codex-provider cloud-pull --ids <id1,id2>
+codex-provider cloud-status
+```
+
+冲突和安全策略：
+
+- 上传同 ID 且内容 hash 相同：跳过
+- 上传同 ID 但内容不同：保留新 revision，并标记冲突
+- 拉取时本地已有同 ID：跳过，不覆盖
+- 拉取前会创建本地备份到 `~/.codex/backups_state/cloud-sync`
+- 服务器明文保存会话内容，请只部署在你控制的服务器，并放在 HTTPS 后面
+
 ## AI 一键处理
 
 如果你想直接交给 AI 助手处理，把下面这段原样发给 AI：

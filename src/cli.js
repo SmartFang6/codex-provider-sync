@@ -3,6 +3,14 @@
 import path from "node:path";
 
 import { DEFAULT_BACKUP_RETENTION_COUNT } from "./constants.js";
+import { startCloudServer } from "./cloud-server.js";
+import {
+  getCloudClientStatus,
+  listCloudRemoteSessions,
+  runCloudLogin,
+  runCloudPull,
+  runCloudPush
+} from "./cloud-service.js";
 import { installWindowsLauncher } from "./launcher.js";
 import {
   getStatus,
@@ -24,6 +32,11 @@ Usage:
   codex-provider prune-backups [--keep N] [--codex-home PATH]
   codex-provider restore <backup-dir> [--codex-home PATH]
   codex-provider gui [--port PORT] [--codex-home PATH]
+  codex-provider cloud-server [--host HOST] [--port PORT] [--data-dir PATH] [--admin-user USER] [--admin-password PASSWORD]
+  codex-provider cloud-login --server URL [--user USER] [--password PASSWORD] [--codex-home PATH]
+  codex-provider cloud-status [--codex-home PATH]
+  codex-provider cloud-push (--all | --ids id1,id2) [--codex-home PATH]
+  codex-provider cloud-pull (--all | --ids id1,id2) [--codex-home PATH]
   codex-provider install-windows-launcher [--dir PATH] [--codex-home PATH]
 `);
 }
@@ -118,6 +131,40 @@ function parseKeepCount(rawValue, { allowZero = false } = {}) {
   return keepCount;
 }
 
+function parsePort(rawValue, fallback) {
+  if (rawValue === undefined) {
+    return fallback;
+  }
+  const port = Number.parseInt(rawValue, 10);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`Invalid port: ${rawValue}`);
+  }
+  return port;
+}
+
+function parseIdList(rawValue) {
+  if (!rawValue) {
+    return [];
+  }
+  return String(rawValue)
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+function parseCloudSelection(flags) {
+  const ids = parseIdList(flags.ids);
+  const all = flags.all === true || flags.all === "true";
+  if (!all && ids.length === 0) {
+    throw new Error("Choose sessions with --all or --ids id1,id2.");
+  }
+  return { all, ids };
+}
+
+function summarizeCloudSessions(sessions) {
+  return `${sessions.length} session(s)`;
+}
+
 async function main() {
   const { positionals, flags } = parseArgs(process.argv.slice(2));
   const command = positionals[0];
@@ -181,6 +228,85 @@ async function main() {
       codexHome: flags["codex-home"],
       port
     });
+    return;
+  }
+
+  if (command === "cloud-server") {
+    const result = await startCloudServer({
+      host: flags.host || "127.0.0.1",
+      port: parsePort(flags.port, 8787),
+      dataDir: flags["data-dir"] ? path.resolve(flags["data-dir"]) : undefined,
+      adminUser: flags["admin-user"] || process.env.CODEX_SYNC_ADMIN_USER || "admin",
+      adminPassword: flags["admin-password"] || process.env.CODEX_SYNC_ADMIN_PASSWORD
+    });
+    console.log("Codex Session Sync server");
+    console.log(`URL: ${result.url}`);
+    console.log(`Data dir: ${result.dataDir}`);
+    console.log("Press Ctrl+C to exit");
+    return;
+  }
+
+  if (command === "cloud-login") {
+    const result = await runCloudLogin({
+      codexHome: flags["codex-home"],
+      server: flags.server,
+      username: flags.user || flags.username || "admin",
+      password: flags.password,
+      deviceName: flags["device-name"]
+    });
+    console.log(`Logged in to ${result.server}`);
+    console.log(`Codex home: ${result.codexHome}`);
+    console.log(`User: ${result.username}`);
+    console.log(`Device: ${result.device.name}`);
+    return;
+  }
+
+  if (command === "cloud-status") {
+    const status = await getCloudClientStatus({ codexHome: flags["codex-home"] });
+    console.log(`Codex home: ${status.codexHome}`);
+    console.log(`Cloud login: ${status.loggedIn ? "yes" : "no"}`);
+    if (status.loggedIn) {
+      console.log(`Server: ${status.server}`);
+      console.log(`User: ${status.username}`);
+      console.log(`Device: ${status.device?.name ?? "(unknown)"}`);
+      try {
+        const remote = await listCloudRemoteSessions({ codexHome: flags["codex-home"] });
+        console.log(`Remote sessions: ${summarizeCloudSessions(remote.sessions)}`);
+      } catch (error) {
+        console.log(`Remote sessions: unavailable (${error.message})`);
+      }
+    }
+    return;
+  }
+
+  if (command === "cloud-push") {
+    const selection = parseCloudSelection(flags);
+    const result = await runCloudPush({
+      codexHome: flags["codex-home"],
+      ...selection
+    });
+    console.log(`Cloud push server: ${result.server}`);
+    console.log(`Selected local sessions: ${result.selected}`);
+    console.log(`Uploaded sessions: ${result.uploaded}`);
+    console.log(`Skipped same hash: ${result.skippedSameHash?.length ?? 0}`);
+    console.log(`Conflicts: ${result.conflicts?.length ?? 0}`);
+    if (result.skippedMissingRollouts?.length) {
+      console.log(`Skipped missing rollout files: ${result.skippedMissingRollouts.join(", ")}`);
+    }
+    return;
+  }
+
+  if (command === "cloud-pull") {
+    const selection = parseCloudSelection(flags);
+    const result = await runCloudPull({
+      codexHome: flags["codex-home"],
+      ...selection
+    });
+    console.log(`Cloud pull server: ${result.server}`);
+    console.log(`Received sessions: ${result.received}`);
+    console.log(`Imported sessions: ${result.imported}`);
+    console.log(`Skipped existing local sessions: ${result.skippedExisting.length}`);
+    console.log(`Backup: ${result.backupDir}`);
     return;
   }
 

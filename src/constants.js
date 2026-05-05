@@ -4,6 +4,7 @@ import path from "node:path";
 export const DEFAULT_PROVIDER = "openai";
 export const DEFAULT_LOCK_NAME = "provider-sync.lock";
 export const BACKUP_NAMESPACE = "provider-sync";
+export const CLOUD_BACKUP_NAMESPACE = "cloud-sync";
 export const DB_FILE_BASENAME = "state_5.sqlite";
 export const DEFAULT_BACKUP_RETENTION_COUNT = 5;
 export const SESSION_DIRS = ["sessions", "archived_sessions"];
@@ -14,4 +15,8 @@ export function defaultCodexHome() {
 
 export function defaultBackupRoot(codexHome) {
   return path.join(codexHome, "backups_state", BACKUP_NAMESPACE);
+}
+
+export function defaultCloudBackupRoot(codexHome) {
+  return path.join(codexHome, "backups_state", CLOUD_BACKUP_NAMESPACE);
 }

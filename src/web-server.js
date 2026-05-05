@@ -11,6 +11,15 @@ import {
   runRestore,
   runPruneBackups
 } from "./service.js";
+import {
+  deleteCloudRemoteSession,
+  getCloudClientStatus,
+  listCloudLocalSessions,
+  listCloudRemoteSessions,
+  runCloudLogin,
+  runCloudPull,
+  runCloudPush
+} from "./cloud-service.js";
 import { defaultBackupRoot, defaultCodexHome } from "./constants.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -146,6 +155,57 @@ async function handleApi(req, res, codexHome) {
     const results = [];
     for (const id of ids) {
       results.push(await deleteSessionById(codexHome, id));
+    }
+    return json(res, { deleted: results.length, results });
+  }
+  if (url.pathname === "/api/cloud/status" && req.method === "GET") {
+    const result = await getCloudClientStatus({ codexHome });
+    return json(res, result);
+  }
+  if (url.pathname === "/api/cloud/login" && req.method === "POST") {
+    const body = await readBody(req);
+    const result = await runCloudLogin({
+      codexHome,
+      server: body.server,
+      username: body.username || "admin",
+      password: body.password,
+      deviceName: body.deviceName
+    });
+    return json(res, result);
+  }
+  if (url.pathname === "/api/cloud/local-sessions" && req.method === "GET") {
+    const result = await listCloudLocalSessions({ codexHome });
+    return json(res, result);
+  }
+  if (url.pathname === "/api/cloud/remote-sessions" && req.method === "GET") {
+    const result = await listCloudRemoteSessions({ codexHome });
+    return json(res, result);
+  }
+  if (url.pathname === "/api/cloud/push" && req.method === "POST") {
+    const body = await readBody(req);
+    const result = await runCloudPush({
+      codexHome,
+      ids: body.ids,
+      all: Boolean(body.all)
+    });
+    return json(res, result);
+  }
+  if (url.pathname === "/api/cloud/pull" && req.method === "POST") {
+    const body = await readBody(req);
+    const result = await runCloudPull({
+      codexHome,
+      ids: body.ids,
+      all: Boolean(body.all)
+    });
+    return json(res, result);
+  }
+  if (url.pathname === "/api/cloud/delete" && req.method === "POST") {
+    const body = await readBody(req);
+    const ids = body.ids || [];
+    if (!ids.length) throw new Error("未提供要删除的远端会话 ID");
+    const results = [];
+    for (const id of ids) {
+      results.push(await deleteCloudRemoteSession({ codexHome, id }));
     }
     return json(res, { deleted: results.length, results });
   }

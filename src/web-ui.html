@@ -81,7 +81,7 @@ header .badge{
 }
 .form-group{display:flex;flex-direction:column;gap:6px;flex:1;min-width:180px}
 .form-group label{font-size:12px;color:var(--text-dim);font-weight:500}
-select,input[type="number"]{
+select,input[type="number"],input[type="text"],input[type="password"]{
   background:var(--bg);color:var(--text);
   border:1px solid var(--border);border-radius:8px;
   padding:10px 14px;font-size:14px;outline:none;
@@ -177,6 +177,37 @@ select:focus,input:focus{border-color:var(--accent)}
   background:rgba(88,166,255,0.1);color:var(--accent);
   font-variant-numeric:tabular-nums;
 }
+.cloud-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:14px}
+.cloud-panel{
+  min-width:0;border:1px solid var(--border);border-radius:8px;
+  padding:14px;background:rgba(255,255,255,0.02);
+}
+.cloud-panel h3{font-size:14px;font-weight:600;margin-bottom:10px}
+.cloud-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.cloud-list{max-height:360px;overflow-y:auto}
+.cloud-session{
+  display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:start;
+  padding:10px;border-radius:8px;border:1px solid transparent;
+  background:rgba(255,255,255,0.02);margin-bottom:6px;
+}
+.cloud-session:hover{border-color:var(--border)}
+.cloud-session.selected{border-color:rgba(88,166,255,0.4);background:rgba(88,166,255,0.06)}
+.cloud-session input{width:16px;height:16px;margin-top:3px;accent-color:var(--accent)}
+.cloud-title{font-size:14px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cloud-meta{font-size:12px;color:var(--text-dim);line-height:1.5;margin-top:3px;word-break:break-all}
+.cloud-meta code{font-size:11px;color:var(--accent);background:rgba(88,166,255,0.08);padding:1px 5px;border-radius:3px}
+.cloud-status-line{font-size:13px;color:var(--text-dim);margin-top:10px}
+.cloud-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.tag-conflict{
+  font-size:11px;padding:2px 8px;border-radius:10px;
+  background:rgba(248,81,73,0.12);color:var(--red);
+  border:1px solid rgba(248,81,73,0.3);white-space:nowrap;
+}
+@media (max-width: 860px){
+  body{padding:14px}
+  .info-grid,.cloud-grid{grid-template-columns:1fr}
+  .search-input{width:100%}
+}
 </style>
 </head>
 <body>
@@ -240,6 +271,74 @@ select:focus,input:focus{border-color:var(--accent)}
     </div>
     <div class="session-list" id="sessionList">
       <div style="color:var(--text-dim);padding:24px;text-align:center">点击「加载」查看会话列表</div>
+    </div>
+  </div>
+
+  <div class="card fade-in" style="animation-delay:0.14s">
+    <div class="flex-between">
+      <h2>云同步 <span class="count-badge" id="cloudLoginBadge">未登录</span></h2>
+      <button class="btn btn-outline btn-sm" id="btnCloudRefresh" onclick="refreshCloudAll()">刷新云同步</button>
+    </div>
+    <div class="actions" style="margin-top:12px">
+      <div class="form-group">
+        <label>服务器地址</label>
+        <input id="cloudServer" type="text" placeholder="https://codex.bifang.us.ci">
+      </div>
+      <div class="form-group" style="max-width:160px">
+        <label>账号</label>
+        <input id="cloudUser" type="text" value="admin">
+      </div>
+      <div class="form-group" style="max-width:220px">
+        <label>密码</label>
+        <input id="cloudPassword" type="password" placeholder="登录时填写">
+      </div>
+      <button class="btn btn-primary" id="btnCloudLogin" onclick="doCloudLogin()">登录</button>
+    </div>
+    <div class="cloud-status-line" id="cloudStatusLine">云同步未配置。</div>
+
+    <div class="cloud-grid">
+      <div class="cloud-panel">
+        <div class="flex-between">
+          <h3>本地会话 <span class="count-badge" id="cloudLocalCount">0</span></h3>
+          <button class="btn btn-outline btn-sm" id="btnLoadCloudLocal" onclick="loadCloudLocal()">加载本地</button>
+        </div>
+        <div class="cloud-toolbar">
+          <input class="search-input" id="cloudLocalSearch" type="text" placeholder="搜索本地会话..." oninput="renderCloudLocal()">
+          <label class="checkbox-group" style="font-size:12px">
+            <input type="checkbox" id="chkCloudLocalAll" onchange="toggleCloudLocalAll(this.checked)"> 全选结果
+          </label>
+        </div>
+        <div class="cloud-list" id="cloudLocalList">
+          <div style="color:var(--text-dim);padding:20px;text-align:center">点击“加载本地”选择要上传的会话</div>
+        </div>
+        <div class="cloud-actions">
+          <button class="btn btn-primary btn-sm" id="btnCloudPushSelected" onclick="doCloudPush(false)">上传选中</button>
+          <button class="btn btn-outline btn-sm" id="btnCloudPushAll" onclick="doCloudPush(true)">上传全部</button>
+          <span id="cloudLocalSelectedInfo" style="font-size:12px;color:var(--text-dim);align-self:center"></span>
+        </div>
+      </div>
+
+      <div class="cloud-panel">
+        <div class="flex-between">
+          <h3>服务器会话 <span class="count-badge" id="cloudRemoteCount">0</span></h3>
+          <button class="btn btn-outline btn-sm" id="btnLoadCloudRemote" onclick="loadCloudRemote()">加载服务器</button>
+        </div>
+        <div class="cloud-toolbar">
+          <input class="search-input" id="cloudRemoteSearch" type="text" placeholder="搜索服务器会话..." oninput="renderCloudRemote()">
+          <label class="checkbox-group" style="font-size:12px">
+            <input type="checkbox" id="chkCloudRemoteAll" onchange="toggleCloudRemoteAll(this.checked)"> 全选结果
+          </label>
+        </div>
+        <div class="cloud-list" id="cloudRemoteList">
+          <div style="color:var(--text-dim);padding:20px;text-align:center">登录后加载服务器会话</div>
+        </div>
+        <div class="cloud-actions">
+          <button class="btn btn-green btn-sm" id="btnCloudPullSelected" onclick="doCloudPull(false)">拉取选中</button>
+          <button class="btn btn-outline btn-sm" id="btnCloudPullAll" onclick="doCloudPull(true)">拉取全部</button>
+          <button class="btn btn-danger btn-sm" id="btnCloudDeleteRemote" onclick="doCloudDeleteRemote()">删除远端选中</button>
+          <span id="cloudRemoteSelectedInfo" style="font-size:12px;color:var(--text-dim);align-self:center"></span>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -314,6 +413,10 @@ async function api(path, method = 'GET', body = null) {
 let sessionsData = [];
 let edgesData = [];
 let selectedIds = new Set();
+let cloudLocalData = [];
+let cloudRemoteData = [];
+let cloudLocalSelected = new Set();
+let cloudRemoteSelected = new Set();
 
 async function loadStatus() {
   try {
@@ -487,6 +590,244 @@ async function doDeleteSelected() {
   }
 }
 
+function cloudFormatTime(value) {
+  if (!value) return '-';
+  const n = Number(value);
+  const d = Number.isFinite(n) && String(value).length <= 10
+    ? new Date(n * 1000)
+    : new Date(value);
+  return Number.isNaN(d.getTime()) ? '-' : d.toLocaleString('zh-CN', { month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit' });
+}
+
+function escJs(s) {
+  return String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
+function cloudMatches(s, q) {
+  if (!q) return true;
+  return [s.id, s.title, s.cwd, s.model_provider, s.rollout_relative_path, s.rollout_path]
+    .filter(Boolean)
+    .some(v => String(v).toLowerCase().includes(q));
+}
+
+function getFilteredCloudLocal() {
+  const q = (document.getElementById('cloudLocalSearch').value || '').toLowerCase();
+  return cloudLocalData.filter(s => cloudMatches(s, q));
+}
+
+function getFilteredCloudRemote() {
+  const q = (document.getElementById('cloudRemoteSearch').value || '').toLowerCase();
+  return cloudRemoteData.filter(s => cloudMatches(s, q));
+}
+
+function renderCloudItem(s, kind) {
+  const selected = kind === 'local' ? cloudLocalSelected : cloudRemoteSelected;
+  const checked = selected.has(s.id) ? 'checked' : '';
+  const cls = selected.has(s.id) ? ' selected' : '';
+  const toggle = kind === 'local' ? 'toggleCloudLocal' : 'toggleCloudRemote';
+  const title = escHtml(s.title || s.first_user_message || '(无标题)');
+  const provider = escHtml(s.model_provider || '(missing)');
+  const time = cloudFormatTime(s.updated_at || s.uploaded_at || s.updated_at_remote);
+  const size = s.rollout_size ? formatBytes(Number(s.rollout_size)) : '-';
+  const conflict = s.conflict ? '<span class="tag-conflict">冲突</span>' : '';
+  const archived = s.archived ? '<span class="tag-archived">已归档</span>' : '';
+  const pathText = escHtml((s.rollout_relative_path || s.rollout_path || '').replace(/^\/Users\/[^/]+/, '~'));
+  return `<div class="cloud-session${cls}">
+    <input type="checkbox" ${checked} onchange="${toggle}('${escJs(s.id)}', this.checked)">
+    <div>
+      <div class="cloud-title">${title}</div>
+      <div class="cloud-meta">
+        <code>${provider}</code> · ${time} · ${size}<br>
+        <code>${pathText || s.id}</code>
+      </div>
+    </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">${conflict}${archived}</div>
+  </div>`;
+}
+
+async function loadCloudStatus() {
+  try {
+    const s = await api('cloud/status');
+    document.getElementById('cloudLoginBadge').textContent = s.loggedIn ? '已登录' : '未登录';
+    if (s.server) document.getElementById('cloudServer').value = s.server;
+    if (s.username) document.getElementById('cloudUser').value = s.username;
+    document.getElementById('cloudStatusLine').textContent = s.loggedIn
+      ? `已连接 ${s.server} · ${s.username} · 设备 ${s.device?.name || '-'}`
+      : '云同步未配置。';
+  } catch (e) {
+    document.getElementById('cloudStatusLine').textContent = `云同步状态读取失败：${e.message}`;
+  }
+}
+
+async function doCloudLogin() {
+  const server = document.getElementById('cloudServer').value.trim();
+  const username = document.getElementById('cloudUser').value.trim() || 'admin';
+  const password = document.getElementById('cloudPassword').value;
+  if (!server || !password) {
+    log('请填写服务器地址和密码。', 'error');
+    return;
+  }
+  setLoading('btnCloudLogin', true);
+  try {
+    const r = await api('cloud/login', 'POST', { server, username, password });
+    document.getElementById('cloudPassword').value = '';
+    log(`✅ 云同步登录成功：${r.server}`, 'success');
+    await loadCloudStatus();
+    await loadCloudRemote();
+  } catch (e) {
+    log(`❌ 云同步登录失败: ${e.message}`, 'error');
+  } finally {
+    setLoading('btnCloudLogin', false);
+  }
+}
+
+async function loadCloudLocal() {
+  setLoading('btnLoadCloudLocal', true);
+  try {
+    const r = await api('cloud/local-sessions');
+    cloudLocalData = r.sessions || [];
+    cloudLocalSelected.clear();
+    renderCloudLocal();
+  } catch (e) {
+    log(`加载本地云同步会话失败: ${e.message}`, 'error');
+  } finally {
+    setLoading('btnLoadCloudLocal', false);
+  }
+}
+
+async function loadCloudRemote() {
+  setLoading('btnLoadCloudRemote', true);
+  try {
+    const r = await api('cloud/remote-sessions');
+    cloudRemoteData = r.sessions || [];
+    cloudRemoteSelected.clear();
+    renderCloudRemote();
+  } catch (e) {
+    log(`加载服务器会话失败: ${e.message}`, 'error');
+  } finally {
+    setLoading('btnLoadCloudRemote', false);
+  }
+}
+
+function renderCloudLocal() {
+  const list = document.getElementById('cloudLocalList');
+  const filtered = getFilteredCloudLocal();
+  document.getElementById('cloudLocalCount').textContent = `${filtered.length} / ${cloudLocalData.length}`;
+  document.getElementById('cloudLocalSelectedInfo').textContent = cloudLocalSelected.size ? `已选 ${cloudLocalSelected.size}` : '';
+  document.getElementById('chkCloudLocalAll').checked = filtered.length > 0 && filtered.every(s => cloudLocalSelected.has(s.id));
+  list.innerHTML = filtered.length
+    ? filtered.map(s => renderCloudItem(s, 'local')).join('')
+    : '<div style="color:var(--text-dim);padding:20px;text-align:center">没有本地结果</div>';
+}
+
+function renderCloudRemote() {
+  const list = document.getElementById('cloudRemoteList');
+  const filtered = getFilteredCloudRemote();
+  document.getElementById('cloudRemoteCount').textContent = `${filtered.length} / ${cloudRemoteData.length}`;
+  document.getElementById('cloudRemoteSelectedInfo').textContent = cloudRemoteSelected.size ? `已选 ${cloudRemoteSelected.size}` : '';
+  document.getElementById('chkCloudRemoteAll').checked = filtered.length > 0 && filtered.every(s => cloudRemoteSelected.has(s.id));
+  list.innerHTML = filtered.length
+    ? filtered.map(s => renderCloudItem(s, 'remote')).join('')
+    : '<div style="color:var(--text-dim);padding:20px;text-align:center">没有服务器结果</div>';
+}
+
+function toggleCloudLocal(id, checked) {
+  if (checked) cloudLocalSelected.add(id); else cloudLocalSelected.delete(id);
+  renderCloudLocal();
+}
+
+function toggleCloudRemote(id, checked) {
+  if (checked) cloudRemoteSelected.add(id); else cloudRemoteSelected.delete(id);
+  renderCloudRemote();
+}
+
+function toggleCloudLocalAll(checked) {
+  for (const s of getFilteredCloudLocal()) {
+    if (checked) cloudLocalSelected.add(s.id); else cloudLocalSelected.delete(s.id);
+  }
+  renderCloudLocal();
+}
+
+function toggleCloudRemoteAll(checked) {
+  for (const s of getFilteredCloudRemote()) {
+    if (checked) cloudRemoteSelected.add(s.id); else cloudRemoteSelected.delete(s.id);
+  }
+  renderCloudRemote();
+}
+
+async function doCloudPush(all) {
+  const ids = [...cloudLocalSelected];
+  if (!all && !ids.length) {
+    log('请先选择要上传的本地会话。', 'error');
+    return;
+  }
+  if (!confirm(all ? '确定上传全部本地会话吗？' : `确定上传选中的 ${ids.length} 个本地会话吗？`)) return;
+  setLoading(all ? 'btnCloudPushAll' : 'btnCloudPushSelected', true);
+  try {
+    const r = await api('cloud/push', 'POST', { all, ids });
+    log(`✅ 上传完成 · 上传 ${r.uploaded} · 同内容跳过 ${r.skippedSameHash?.length || 0} · 冲突 ${r.conflicts?.length || 0}`, 'success');
+    if (r.skippedMissingRollouts?.length) log(`跳过缺少 rollout 的会话: ${r.skippedMissingRollouts.join(', ')}`, 'error');
+    await loadCloudRemote();
+  } catch (e) {
+    log(`❌ 上传失败: ${e.message}`, 'error');
+  } finally {
+    setLoading(all ? 'btnCloudPushAll' : 'btnCloudPushSelected', false);
+  }
+}
+
+async function doCloudPull(all) {
+  const ids = [...cloudRemoteSelected];
+  if (!all && !ids.length) {
+    log('请先选择要拉取的服务器会话。', 'error');
+    return;
+  }
+  if (!confirm(all ? '确定拉取全部服务器会话到本地 Codex 吗？已有同 ID 会跳过。' : `确定拉取选中的 ${ids.length} 个服务器会话吗？已有同 ID 会跳过。`)) return;
+  setLoading(all ? 'btnCloudPullAll' : 'btnCloudPullSelected', true);
+  try {
+    const r = await api('cloud/pull', 'POST', { all, ids });
+    log(`✅ 拉取完成 · 收到 ${r.received} · 导入 ${r.imported} · 已存在跳过 ${r.skippedExisting?.length || 0}`, 'success');
+    log(`  本地备份: ${r.backupDir}`);
+    await loadCloudLocal();
+    await loadSessions();
+    await loadStatus();
+  } catch (e) {
+    log(`❌ 拉取失败: ${e.message}`, 'error');
+  } finally {
+    setLoading(all ? 'btnCloudPullAll' : 'btnCloudPullSelected', false);
+  }
+}
+
+async function doCloudDeleteRemote() {
+  const ids = [...cloudRemoteSelected];
+  if (!ids.length) {
+    log('请先选择要删除的服务器会话。', 'error');
+    return;
+  }
+  if (!confirm(`确定删除服务器上的 ${ids.length} 个会话吗？本地不会删除。`)) return;
+  setLoading('btnCloudDeleteRemote', true);
+  try {
+    const r = await api('cloud/delete', 'POST', { ids });
+    log(`✅ 已删除服务器会话 ${r.deleted} 个`, 'success');
+    cloudRemoteSelected.clear();
+    await loadCloudRemote();
+  } catch (e) {
+    log(`❌ 删除服务器会话失败: ${e.message}`, 'error');
+  } finally {
+    setLoading('btnCloudDeleteRemote', false);
+  }
+}
+
+async function refreshCloudAll() {
+  setLoading('btnCloudRefresh', true);
+  try {
+    await loadCloudStatus();
+    await loadCloudLocal();
+    await loadCloudRemote();
+  } finally {
+    setLoading('btnCloudRefresh', false);
+  }
+}
+
 function renderStatus() {
   const s = statusData;
   const implicit = s.currentProviderImplicit ? ' (隐式默认)' : '';
@@ -636,6 +977,7 @@ async function doRefresh() {
 }
 
 loadStatus();
+loadCloudStatus();
 </script>
 </body>
 </html>
