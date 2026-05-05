@@ -165,7 +165,7 @@ location ^~ / {
 }
 ```
 
-如果使用你的服务器规划，可以把新子域名（例如 `codex.bifang.us.ci`）解析到 `64.83.43.32`，再在 1Panel 里新增网站并反代到 `127.0.0.1:8787`。
+把自己的同步子域名（例如 `sync.example.com`）解析到服务器公网 IP（例如 `<your-server-ip>`），再在 1Panel 里新增网站并反代到 `127.0.0.1:8787`。
 
 ### 本地使用
 
@@ -180,7 +180,7 @@ codex-provider gui --codex-home ~/.codex
 也可以使用 CLI：
 
 ```bash
-codex-provider cloud-login --server https://codex.bifang.us.ci --user admin --password <password>
+codex-provider cloud-login --server https://sync.example.com --user admin --password <password>
 codex-provider cloud-push --all
 codex-provider cloud-push --ids <id1,id2>
 codex-provider cloud-pull --all
@@ -195,6 +195,7 @@ codex-provider cloud-status
 - 拉取时本地已有同 ID：跳过，不覆盖
 - 拉取前会创建本地备份到 `~/.codex/backups_state/cloud-sync`
 - 服务器明文保存会话内容，请只部署在你控制的服务器，并放在 HTTPS 后面
+- 不要把真实域名、IP、密码或 token 提交到公开仓库
 
 ## AI 一键处理
 
