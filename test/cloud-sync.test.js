@@ -101,6 +101,31 @@ async function writeStateDb(codexHome) {
   }
 }
 
+async function readSessionIndex(codexHome) {
+  const content = await fs.readFile(path.join(codexHome, "session_index.jsonl"), "utf8");
+  return content
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+}
+
+async function writeGlobalWorkspaceRoots(codexHome, roots) {
+  await fs.writeFile(
+    path.join(codexHome, ".codex-global-state.json"),
+    JSON.stringify({
+      "electron-saved-workspace-roots": roots,
+      "active-workspace-roots": [],
+      "project-order": roots
+    }),
+    "utf8"
+  );
+}
+
+async function readRolloutMeta(filePath) {
+  const content = await fs.readFile(filePath, "utf8");
+  return JSON.parse(content.split(/\r?\n/, 1)[0]);
+}
+
 async function startTestServer() {
   const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-cloud-server-"));
   const started = await startCloudServer({
@@ -129,6 +154,9 @@ test("cloud server rejects unauthenticated remote session access", async () => {
 test("cloud push uploads sessions and pull imports them into another codex home", async () => {
   const source = await makeTempCodexHome("codex-cloud-source-");
   const dest = await makeTempCodexHome("codex-cloud-dest-");
+  const destProjectRoot = path.join(dest.root, "workspaces", "project");
+  await fs.mkdir(destProjectRoot, { recursive: true });
+  await writeGlobalWorkspaceRoots(dest.codexHome, [destProjectRoot]);
   const sessionPath = path.join(source.codexHome, "sessions", "2026", "03", "19", "rollout-a.jsonl");
   const archivedPath = path.join(source.codexHome, "archived_sessions", "2026", "03", "18", "rollout-b.jsonl");
   await writeRollout(sessionPath, { id: "thread-a" });
@@ -150,16 +178,17 @@ test("cloud push uploads sessions and pull imports them into another codex home"
     assert.equal(pull.received, 2);
     assert.equal(pull.imported, 2);
     assert.deepEqual(pull.skippedExisting, []);
+    assert.equal(pull.sessionIndexRowsUpserted, 2);
 
     await fs.access(path.join(dest.codexHome, "sessions", "2026", "03", "19", "rollout-a.jsonl"));
     await fs.access(path.join(dest.codexHome, "archived_sessions", "2026", "03", "18", "rollout-b.jsonl"));
 
     const db = new DatabaseSync(path.join(dest.codexHome, "state_5.sqlite"));
     try {
-      const rows = db.prepare("SELECT id, archived FROM threads ORDER BY id").all();
+      const rows = db.prepare("SELECT id, archived, cwd FROM threads ORDER BY id").all();
       assert.deepEqual(rows.map((row) => ({ ...row })), [
-        { id: "thread-a", archived: 0 },
-        { id: "thread-b", archived: 1 }
+        { id: "thread-a", archived: 0, cwd: destProjectRoot },
+        { id: "thread-b", archived: 1, cwd: destProjectRoot }
       ]);
       const edges = db.prepare("SELECT parent_thread_id, child_thread_id FROM thread_spawn_edges").all();
       assert.deepEqual(edges.map((row) => ({ ...row })), [
@@ -169,9 +198,34 @@ test("cloud push uploads sessions and pull imports them into another codex home"
       db.close();
     }
 
+    const indexRows = await readSessionIndex(dest.codexHome);
+    assert.deepEqual(indexRows.map((row) => row.id).sort(), ["thread-a", "thread-b"]);
+    assert.deepEqual(indexRows.map((row) => row.thread_name).sort(), ["Archived thread", "Local thread"]);
+    const importedMeta = await readRolloutMeta(path.join(dest.codexHome, "sessions", "2026", "03", "19", "rollout-a.jsonl"));
+    assert.equal(importedMeta.payload.cwd, destProjectRoot);
+
+    const staleDb = new DatabaseSync(path.join(dest.codexHome, "state_5.sqlite"));
+    try {
+      staleDb.prepare("UPDATE threads SET cwd = ?").run("/tmp/project");
+    } finally {
+      staleDb.close();
+    }
+
+    await fs.rm(path.join(dest.codexHome, "session_index.jsonl"), { force: true });
     const secondPull = await runCloudPull({ codexHome: dest.codexHome, all: true });
     assert.equal(secondPull.imported, 0);
     assert.deepEqual(secondPull.skippedExisting.sort(), ["thread-a", "thread-b"]);
+    assert.equal(secondPull.sessionIndexRowsUpserted, 2);
+    assert.equal(secondPull.projectCwdRowsUpdated, 2);
+    const repairedIndexRows = await readSessionIndex(dest.codexHome);
+    assert.deepEqual(repairedIndexRows.map((row) => row.id).sort(), ["thread-a", "thread-b"]);
+    const repairedDb = new DatabaseSync(path.join(dest.codexHome, "state_5.sqlite"));
+    try {
+      const rows = repairedDb.prepare("SELECT DISTINCT cwd FROM threads ORDER BY cwd").all();
+      assert.deepEqual(rows.map((row) => row.cwd), [destProjectRoot]);
+    } finally {
+      repairedDb.close();
+    }
   } finally {
     await closeServer(server);
   }

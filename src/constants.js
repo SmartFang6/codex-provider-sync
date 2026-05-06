@@ -6,6 +6,7 @@ export const DEFAULT_LOCK_NAME = "provider-sync.lock";
 export const BACKUP_NAMESPACE = "provider-sync";
 export const CLOUD_BACKUP_NAMESPACE = "cloud-sync";
 export const DB_FILE_BASENAME = "state_5.sqlite";
+export const SESSION_INDEX_BASENAME = "session_index.jsonl";
 export const DEFAULT_BACKUP_RETENTION_COUNT = 5;
 export const SESSION_DIRS = ["sessions", "archived_sessions"];
 

@@ -785,7 +785,7 @@ async function doCloudPull(all) {
   setLoading(all ? 'btnCloudPullAll' : 'btnCloudPullSelected', true);
   try {
     const r = await api('cloud/pull', 'POST', { all, ids });
-    log(`✅ 拉取完成 · 收到 ${r.received} · 导入 ${r.imported} · 已存在跳过 ${r.skippedExisting?.length || 0}`, 'success');
+    log(`✅ 拉取完成 · 收到 ${r.received} · 导入 ${r.imported} · 已存在跳过 ${r.skippedExisting?.length || 0} · 侧边索引 ${r.sessionIndexRowsUpserted || 0} · 项目归并 ${r.projectCwdRowsUpdated || 0}`, 'success');
     log(`  本地备份: ${r.backupDir}`);
     await loadCloudLocal();
     await loadSessions();

@@ -306,6 +306,8 @@ async function main() {
     console.log(`Received sessions: ${result.received}`);
     console.log(`Imported sessions: ${result.imported}`);
     console.log(`Skipped existing local sessions: ${result.skippedExisting.length}`);
+    console.log(`Session index rows upserted: ${result.sessionIndexRowsUpserted ?? 0}`);
+    console.log(`Project cwd rows updated: ${result.projectCwdRowsUpdated ?? 0}`);
     console.log(`Backup: ${result.backupDir}`);
     return;
   }

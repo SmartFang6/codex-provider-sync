@@ -7,6 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 
 import {
   DB_FILE_BASENAME,
+  SESSION_INDEX_BASENAME,
   SESSION_DIRS,
   defaultCloudBackupRoot
 } from "./constants.js";
@@ -294,6 +295,10 @@ async function createCloudPullBackup(codexHome, incomingSessions) {
       codexHome,
       createdAt: new Date().toISOString(),
       dbFiles: copiedDbFiles,
+      sessionIndexBackedUp: await copyIfPresent(
+        path.join(codexHome, SESSION_INDEX_BASENAME),
+        path.join(backupDir, SESSION_INDEX_BASENAME)
+      ),
       incomingSessionIds: incomingSessions.map((session) => session.id)
     }, null, 2),
     "utf8"
@@ -419,13 +424,7 @@ async function uniqueRolloutRelativePath(codexHome, rawPath, session) {
 
 function insertThread(db, session, rolloutPath) {
   const columns = getTableColumns(db, "threads");
-  const threadRow = {
-    ...fallbackThreadRow(session, rolloutPath),
-    ...(session.threadRow ?? {}),
-    id: session.id,
-    rollout_path: rolloutPath,
-    archived: Number(session.threadRow?.archived ?? (session.rollout?.directory === "archived_sessions" ? 1 : 0)) ? 1 : 0
-  };
+  const threadRow = buildThreadRow(session, rolloutPath);
   const insertColumns = columns.filter((column) => threadRow[column] !== undefined);
   if (!insertColumns.includes("id")) {
     throw new Error("Local threads table does not include an id column.");
@@ -434,6 +433,283 @@ function insertThread(db, session, rolloutPath) {
   const quotedColumns = insertColumns.map((column) => `"${column}"`).join(", ");
   const values = insertColumns.map((column) => normalizeDbValue(threadRow[column]));
   db.prepare(`INSERT INTO threads (${quotedColumns}) VALUES (${placeholders})`).run(...values);
+  return threadRow;
+}
+
+function buildThreadRow(session, rolloutPath) {
+  return {
+    ...fallbackThreadRow(session, rolloutPath),
+    ...(session.threadRow ?? {}),
+    id: session.id,
+    rollout_path: rolloutPath,
+    archived: Number(session.threadRow?.archived ?? (session.rollout?.directory === "archived_sessions" ? 1 : 0)) ? 1 : 0
+  };
+}
+
+function parseSessionIndexLine(line) {
+  if (!line.trim()) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(line);
+    if (!parsed?.id) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function numericTimestampMs(row, session) {
+  const candidates = [
+    row?.updated_at_ms,
+    Number.isFinite(Number(row?.updated_at)) ? Number(row.updated_at) * 1000 : null,
+    session?.sessionMeta?.payload?.updated_at_ms,
+    Number.isFinite(Number(session?.sessionMeta?.payload?.updated_at))
+      ? Number(session.sessionMeta.payload.updated_at) * 1000
+      : null,
+    session?.sessionMeta?.timestamp
+  ];
+
+  for (const candidate of candidates) {
+    if (candidate === null || candidate === undefined || candidate === "") {
+      continue;
+    }
+    if (typeof candidate === "string" && Number.isNaN(Number(candidate))) {
+      const parsed = Date.parse(candidate);
+      if (!Number.isNaN(parsed)) {
+        return parsed;
+      }
+      continue;
+    }
+    const value = Number(candidate);
+    if (Number.isFinite(value) && value > 0) {
+      return value;
+    }
+  }
+  return Date.now();
+}
+
+function sessionIndexEntry(row, session) {
+  const title = row?.title || row?.first_user_message || session?.threadRow?.title || session?.id;
+  return {
+    id: session.id,
+    thread_name: title,
+    updated_at: new Date(numericTimestampMs(row, session)).toISOString()
+  };
+}
+
+async function upsertSessionIndex(codexHome, entries) {
+  if (!entries.length) {
+    return 0;
+  }
+
+  const indexPath = path.join(codexHome, SESSION_INDEX_BASENAME);
+  let content = "";
+  try {
+    content = await fs.readFile(indexPath, "utf8");
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+  }
+
+  const nextById = new Map(entries.map((entry) => [entry.id, entry]));
+  const seen = new Set();
+  const lines = [];
+  let changed = 0;
+
+  for (const line of content.split(/\r?\n/)) {
+    if (!line.trim()) {
+      continue;
+    }
+    const parsed = parseSessionIndexLine(line);
+    if (!parsed) {
+      lines.push(line);
+      continue;
+    }
+    if (seen.has(parsed.id)) {
+      changed += 1;
+      continue;
+    }
+    seen.add(parsed.id);
+    const next = nextById.get(parsed.id);
+    if (!next) {
+      lines.push(line);
+      continue;
+    }
+    const nextLine = JSON.stringify({ ...parsed, ...next });
+    lines.push(nextLine);
+    if (nextLine !== line) {
+      changed += 1;
+    }
+    nextById.delete(parsed.id);
+  }
+
+  for (const entry of nextById.values()) {
+    lines.push(JSON.stringify(entry));
+    changed += 1;
+  }
+
+  if (changed === 0) {
+    return 0;
+  }
+
+  await fs.writeFile(indexPath, `${lines.join("\n")}\n`, "utf8");
+  return changed;
+}
+
+function normalizePathForMatch(value) {
+  if (!value || typeof value !== "string") {
+    return "";
+  }
+  return value
+    .replaceAll("\\", "/")
+    .replace(/\/+$/, "");
+}
+
+function pathSegments(value) {
+  return normalizePathForMatch(value)
+    .split("/")
+    .filter((part) => part && !/^[A-Za-z]:$/.test(part));
+}
+
+function commonSuffixLength(left, right) {
+  const leftParts = pathSegments(left);
+  const rightParts = pathSegments(right);
+  let count = 0;
+  while (
+    count < leftParts.length
+    && count < rightParts.length
+    && leftParts[leftParts.length - 1 - count].toLowerCase() === rightParts[rightParts.length - 1 - count].toLowerCase()
+  ) {
+    count += 1;
+  }
+  return count;
+}
+
+function addWorkspaceRoot(roots, value) {
+  const normalized = normalizePathForMatch(value);
+  if (normalized) {
+    roots.add(normalized);
+  }
+}
+
+async function readGlobalWorkspaceRoots(codexHome) {
+  let parsed;
+  try {
+    parsed = JSON.parse(await fs.readFile(path.join(codexHome, ".codex-global-state.json"), "utf8"));
+  } catch {
+    return [];
+  }
+
+  const roots = new Set();
+  for (const key of ["electron-saved-workspace-roots", "active-workspace-roots", "project-order"]) {
+    if (Array.isArray(parsed[key])) {
+      for (const value of parsed[key]) {
+        addWorkspaceRoot(roots, value);
+      }
+    }
+  }
+
+  if (parsed["thread-workspace-root-hints"] && typeof parsed["thread-workspace-root-hints"] === "object") {
+    for (const value of Object.values(parsed["thread-workspace-root-hints"])) {
+      addWorkspaceRoot(roots, value);
+    }
+  }
+
+  return [...roots];
+}
+
+async function buildProjectCwdResolver(codexHome, existingRows) {
+  const roots = new Set(await readGlobalWorkspaceRoots(codexHome));
+  for (const row of existingRows) {
+    if (row?.cwd && await pathExists(row.cwd)) {
+      addWorkspaceRoot(roots, row.cwd);
+    }
+  }
+
+  const candidates = [...roots];
+  return (incomingCwd) => {
+    const normalizedIncoming = normalizePathForMatch(incomingCwd);
+    if (!normalizedIncoming) {
+      return { cwd: incomingCwd ?? "", matched: false };
+    }
+    const exactMatch = candidates.find((candidate) =>
+      candidate.toLowerCase() === normalizedIncoming.toLowerCase()
+    );
+    if (exactMatch) {
+      return { cwd: exactMatch, matched: true };
+    }
+
+    const scored = candidates
+      .map((candidate) => ({
+        candidate,
+        score: commonSuffixLength(candidate, normalizedIncoming)
+      }))
+      .filter((item) => item.score > 0)
+      .sort((left, right) => right.score - left.score || left.candidate.localeCompare(right.candidate));
+
+    if (!scored.length) {
+      return { cwd: incomingCwd ?? "", matched: false };
+    }
+    if (scored.length > 1 && scored[0].score === scored[1].score) {
+      return { cwd: incomingCwd ?? "", matched: false };
+    }
+    return { cwd: scored[0].candidate, matched: true };
+  };
+}
+
+function rewriteRolloutContentCwd(content, cwd) {
+  if (!content) {
+    return content;
+  }
+  const newlineIndex = content.indexOf("\n");
+  const hasNewline = newlineIndex !== -1;
+  const rawFirstLine = hasNewline ? content.slice(0, newlineIndex) : content;
+  const separator = rawFirstLine.endsWith("\r") ? "\r\n" : (hasNewline ? "\n" : "");
+  const firstLine = rawFirstLine.replace(/\r$/, "");
+  const rest = hasNewline ? content.slice(newlineIndex + 1) : "";
+
+  try {
+    const parsed = JSON.parse(firstLine);
+    if (parsed?.type !== "session_meta" || typeof parsed?.payload !== "object" || parsed.payload === null) {
+      return content;
+    }
+    parsed.payload.cwd = cwd;
+    return `${JSON.stringify(parsed)}${separator}${rest}`;
+  } catch {
+    return content;
+  }
+}
+
+function withLocalProjectCwd(session, cwd) {
+  if (!cwd) {
+    return session;
+  }
+  return {
+    ...session,
+    threadRow: {
+      ...(session.threadRow ?? {}),
+      cwd
+    },
+    sessionMeta: session.sessionMeta
+      ? {
+          ...session.sessionMeta,
+          payload: {
+            ...(session.sessionMeta.payload ?? {}),
+            cwd
+          }
+        }
+      : session.sessionMeta,
+    rollout: session.rollout
+      ? {
+          ...session.rollout,
+          content: rewriteRolloutContentCwd(session.rollout.content, cwd)
+        }
+      : session.rollout
+  };
 }
 
 function insertEdges(db, edges, importedIds) {
@@ -473,21 +749,36 @@ export async function applyPullBundle(codexHome, bundle) {
   const writtenPaths = [];
   const importedIds = new Set();
   const skippedExisting = [];
+  const indexEntries = [];
+  let projectCwdRowsUpdated = 0;
   let transactionOpen = false;
 
   try {
     ensureMinimalStateSchema(db);
     db.exec("BEGIN IMMEDIATE");
     transactionOpen = true;
-    const existingRows = db.prepare("SELECT id FROM threads").all();
-    const existingIds = new Set(existingRows.map((row) => row.id));
+    const existingRows = db.prepare("SELECT * FROM threads").all();
+    const existingRowById = new Map(existingRows.map((row) => [row.id, row]));
+    const existingIds = new Set(existingRowById.keys());
+    const resolveProjectCwd = await buildProjectCwdResolver(codexHome, existingRows);
 
-    for (const session of sessions) {
+    for (const incomingSession of sessions) {
+      const remoteCwd = incomingSession?.threadRow?.cwd ?? incomingSession?.sessionMeta?.payload?.cwd ?? "";
+      const resolvedProject = resolveProjectCwd(remoteCwd);
+      const localProjectCwd = resolvedProject.cwd;
+      const session = withLocalProjectCwd(incomingSession, localProjectCwd);
       if (!session?.id) {
         continue;
       }
       if (existingIds.has(session.id)) {
+        const existingRow = existingRowById.get(session.id);
         skippedExisting.push(session.id);
+        if (resolvedProject.matched && localProjectCwd && existingRow?.cwd !== localProjectCwd) {
+          db.prepare("UPDATE threads SET cwd = ? WHERE id = ?").run(localProjectCwd, session.id);
+          existingRow.cwd = localProjectCwd;
+          projectCwdRowsUpdated += 1;
+        }
+        indexEntries.push(sessionIndexEntry(existingRow, session));
         continue;
       }
       const rolloutPath = await uniqueRolloutRelativePath(
@@ -499,12 +790,14 @@ export async function applyPullBundle(codexHome, bundle) {
       await fs.mkdir(path.dirname(fullPath), { recursive: true });
       await fs.writeFile(fullPath, session.rollout?.content ?? "", "utf8");
       writtenPaths.push(fullPath);
-      insertThread(db, session, rolloutPath);
+      const threadRow = insertThread(db, session, rolloutPath);
       existingIds.add(session.id);
       importedIds.add(session.id);
+      indexEntries.push(sessionIndexEntry(threadRow, session));
     }
 
     const insertedEdges = insertEdges(db, bundle?.edges ?? [], existingIds);
+    const sessionIndexRowsUpserted = await upsertSessionIndex(codexHome, indexEntries);
     db.exec("COMMIT");
     transactionOpen = false;
     return {
@@ -513,6 +806,8 @@ export async function applyPullBundle(codexHome, bundle) {
       imported: importedIds.size,
       skippedExisting,
       insertedEdges,
+      sessionIndexRowsUpserted,
+      projectCwdRowsUpdated,
       writtenPaths
     };
   } catch (error) {
